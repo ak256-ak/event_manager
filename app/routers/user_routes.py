@@ -17,7 +17,7 @@ Key Highlights:
 - Implements HATEOAS by generating dynamic links for user-related actions, enhancing API discoverability.
 - Utilizes OAuth2PasswordBearer for securing API endpoints, requiring valid access tokens for operations.
 """
-
+'''
 from builtins import dict, int, len, str
 from datetime import timedelta
 from uuid import UUID
@@ -243,3 +243,158 @@ async def verify_email(user_id: UUID, token: str, db: AsyncSession = Depends(get
     if await UserService.verify_email_with_token(db, user_id, token):
         return {"message": "Email verified successfully"}
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification token")
+    '''
+
+import pytest
+from httpx import AsyncClient
+from uuid import uuid4
+from app.main import app
+from app.schemas.user_schemas import UserCreate, UserUpdate
+
+@pytest.fixture
+def mock_user_data():
+    """Provides mock user data for testing."""
+    return UserCreate(
+        email="test@example.com",
+        password="SecurePassword123!",
+        nickname="testuser",
+        first_name="Test",
+        last_name="User"
+    )
+
+@pytest.mark.asyncio
+async def test_get_user_success(async_client: AsyncClient, mock_user_data):
+    """Test retrieving a user successfully."""
+    user_id = str(uuid4())
+    response = await async_client.get(f"/users/{user_id}")
+    assert response.status_code == 200
+    assert "id" in response.json()
+
+
+@pytest.mark.asyncio
+async def test_get_user_not_found(async_client: AsyncClient):
+    """Test retrieving a non-existent user."""
+    non_existent_user_id = str(uuid4())
+    response = await async_client.get(f"/users/{non_existent_user_id}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User not found"
+
+
+@pytest.mark.asyncio
+async def test_update_user_success(async_client: AsyncClient, mock_user_data):
+    """Test updating a user successfully."""
+    user_id = str(uuid4())
+    update_data = UserUpdate(
+        first_name="UpdatedName",
+        last_name="UpdatedLastName",
+        bio="Updated bio"
+    )
+    response = await async_client.put(f"/users/{user_id}", json=update_data.model_dump())
+    assert response.status_code == 200
+    assert response.json()["first_name"] == "UpdatedName"
+
+
+@pytest.mark.asyncio
+async def test_update_user_not_found(async_client: AsyncClient):
+    """Test updating a non-existent user."""
+    non_existent_user_id = str(uuid4())
+    update_data = {"first_name": "Name"}
+    response = await async_client.put(f"/users/{non_existent_user_id}", json=update_data)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User not found"
+
+
+@pytest.mark.asyncio
+async def test_delete_user_success(async_client: AsyncClient):
+    """Test deleting a user successfully."""
+    user_id = str(uuid4())
+    response = await async_client.delete(f"/users/{user_id}")
+    assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_delete_user_not_found(async_client: AsyncClient):
+    """Test deleting a non-existent user."""
+    non_existent_user_id = str(uuid4())
+    response = await async_client.delete(f"/users/{non_existent_user_id}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User not found"
+
+
+@pytest.mark.asyncio
+async def test_create_user_success(async_client: AsyncClient, mock_user_data):
+    """Test creating a user successfully."""
+    response = await async_client.post("/users/", json=mock_user_data.model_dump())
+    assert response.status_code == 201
+    assert response.json()["email"] == mock_user_data.email
+
+
+@pytest.mark.asyncio
+async def test_create_user_duplicate_email(async_client: AsyncClient, mock_user_data):
+    """Test creating a user with an already existing email."""
+    # First create the user
+    await async_client.post("/users/", json=mock_user_data.model_dump())
+    # Try creating again with the same email
+    response = await async_client.post("/users/", json=mock_user_data.model_dump())
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Email already exists"
+
+
+@pytest.mark.asyncio
+async def test_list_users_success(async_client: AsyncClient):
+    """Test listing users successfully."""
+    response = await async_client.get("/users/")
+    assert response.status_code == 200
+    assert "items" in response.json()
+
+
+@pytest.mark.asyncio
+async def test_register_user_success(async_client: AsyncClient, mock_user_data):
+    """Test registering a user successfully."""
+    response = await async_client.post("/register/", json=mock_user_data.model_dump())
+    assert response.status_code == 200
+    assert response.json()["email"] == mock_user_data.email
+
+
+@pytest.mark.asyncio
+async def test_login_user_success(async_client: AsyncClient, mock_user_data):
+    """Test logging in a user successfully."""
+    # First register the user
+    await async_client.post("/register/", json=mock_user_data.model_dump())
+    # Login with correct credentials
+    login_data = {
+        "username": mock_user_data.email,
+        "password": mock_user_data.password
+    }
+    response = await async_client.post("/login/", data=login_data)
+    assert response.status_code == 200
+    assert "access_token" in response.json()
+
+
+@pytest.mark.asyncio
+async def test_login_user_failure(async_client: AsyncClient):
+    """Test logging in a user with incorrect credentials."""
+    login_data = {"username": "wrong@example.com", "password": "WrongPassword"}
+    response = await async_client.post("/login/", data=login_data)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Incorrect email or password"
+
+
+@pytest.mark.asyncio
+async def test_verify_email_success(async_client: AsyncClient):
+    """Test verifying a user's email successfully."""
+    user_id = str(uuid4())
+    token = "valid_verification_token"
+    response = await async_client.get(f"/verify-email/{user_id}/{token}")
+    assert response.status_code == 200
+    assert response.json()["message"] == "Email verified successfully"
+
+
+@pytest.mark.asyncio
+async def test_verify_email_failure(async_client: AsyncClient):
+    """Test verifying a user's email with an invalid token."""
+    user_id = str(uuid4())
+    token = "invalid_verification_token"
+    response = await async_client.get(f"/verify-email/{user_id}/{token}")
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid or expired verification token"

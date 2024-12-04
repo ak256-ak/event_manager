@@ -1,3 +1,4 @@
+'''
 from builtins import Exception, bool, classmethod, int, str
 from datetime import datetime, timezone
 import secrets
@@ -192,3 +193,192 @@ class UserService:
             await session.commit()
             return True
         return False
+'''
+import pytest
+from unittest.mock import MagicMock, AsyncMock
+from app.services.user_service import UserService
+from app.models.user_model import User, UserRole
+from app.utils.security import hash_password
+from uuid import uuid4
+
+@pytest.fixture
+def mock_session():
+    """Mock the AsyncSession."""
+    session = MagicMock()
+    session.execute = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.rollback = AsyncMock()
+    session.add = MagicMock()
+    session.delete = AsyncMock()
+    return session
+
+
+@pytest.fixture
+def mock_user():
+    """Mock user object."""
+    return User(
+        id=uuid4(),
+        email="test@example.com",
+        nickname="testuser",
+        hashed_password=hash_password("password123"),
+        role=UserRole.AUTHENTICATED,
+        email_verified=True
+    )
+
+
+@pytest.fixture
+def mock_email_service():
+    """Mock the email service."""
+    email_service = MagicMock()
+    email_service.send_verification_email = AsyncMock()
+    return email_service
+
+
+@pytest.mark.asyncio
+async def test_create_user_success(mock_session, mock_email_service):
+    """Test successful user creation."""
+    user_data = {
+        "email": "newuser@example.com",
+        "password": "password123",
+        "first_name": "New",
+        "last_name": "User"
+    }
+
+    result = await UserService.create(mock_session, user_data, mock_email_service)
+
+    assert result is not None
+    mock_session.add.assert_called_once()
+    mock_session.commit.assert_called_once()
+    mock_email_service.send_verification_email.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_user_duplicate_email(mock_session, mock_email_service, mock_user):
+    """Test user creation with an existing email."""
+    mock_session.execute.return_value.scalars.return_value.first.return_value = mock_user
+
+    user_data = {
+        "email": mock_user.email,
+        "password": "password123",
+    }
+
+    result = await UserService.create(mock_session, user_data, mock_email_service)
+
+    assert result is None
+    mock_email_service.send_verification_email.assert_not_called()
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_user_success(mock_session, mock_user):
+    """Test successful user update."""
+    mock_session.execute.return_value.scalars.return_value.first.return_value = mock_user
+
+    update_data = {
+        "first_name": "Updated",
+        "last_name": "Name",
+    }
+
+    result = await UserService.update(mock_session, mock_user.id, update_data)
+
+    assert result is not None
+    assert result.first_name == "Updated"
+    mock_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_update_user_not_found(mock_session):
+    """Test user update when the user is not found."""
+    mock_session.execute.return_value.scalars.return_value.first.return_value = None
+
+    update_data = {
+        "first_name": "Updated",
+    }
+
+    result = await UserService.update(mock_session, uuid4(), update_data)
+
+    assert result is None
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_user_success(mock_session, mock_user):
+    """Test successful user deletion."""
+    mock_session.execute.return_value.scalars.return_value.first.return_value = mock_user
+
+    result = await UserService.delete(mock_session, mock_user.id)
+
+    assert result is True
+    mock_session.commit.assert_called_once()
+    mock_session.delete.assert_called_once_with(mock_user)
+
+
+@pytest.mark.asyncio
+async def test_delete_user_not_found(mock_session):
+    """Test user deletion when the user is not found."""
+    mock_session.execute.return_value.scalars.return_value.first.return_value = None
+
+    result = await UserService.delete(mock_session, uuid4())
+
+    assert result is False
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_login_user_success(mock_session, mock_user):
+    """Test successful user login."""
+    mock_session.execute.return_value.scalars.return_value.first.return_value = mock_user
+
+    result = await UserService.login_user(mock_session, mock_user.email, "password123")
+
+    assert result is not None
+    assert result.email == mock_user.email
+    mock_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_login_user_invalid_credentials(mock_session, mock_user):
+    """Test login with invalid credentials."""
+    mock_session.execute.return_value.scalars.return_value.first.return_value = mock_user
+
+    result = await UserService.login_user(mock_session, mock_user.email, "wrongpassword")
+
+    assert result is None
+    mock_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_users(mock_session, mock_user):
+    """Test listing users."""
+    mock_session.execute.return_value.scalars.return_value.all.return_value = [mock_user]
+
+    result = await UserService.list_users(mock_session, skip=0, limit=10)
+
+    assert len(result) == 1
+    assert result[0].email == mock_user.email
+
+
+@pytest.mark.asyncio
+async def test_verify_email_with_token_success(mock_session, mock_user):
+    """Test successful email verification."""
+    mock_user.verification_token = "valid_token"
+    mock_session.execute.return_value.scalars.return_value.first.return_value = mock_user
+
+    result = await UserService.verify_email_with_token(mock_session, mock_user.id, "valid_token")
+
+    assert result is True
+    assert mock_user.email_verified is True
+    mock_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_verify_email_with_token_invalid(mock_session, mock_user):
+    """Test email verification with an invalid token."""
+    mock_user.verification_token = "valid_token"
+    mock_session.execute.return_value.scalars.return_value.first.return_value = mock_user
+
+    result = await UserService.verify_email_with_token(mock_session, mock_user.id, "invalid_token")
+
+    assert result is False
+    mock_session.commit.assert_not_called()
